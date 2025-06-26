@@ -10,6 +10,7 @@ pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
 
 app = FastAPI()
 
+
 def deskew_image_strict(pil_img: Image.Image) -> Image.Image:
     gray = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2GRAY)
     _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
@@ -21,6 +22,7 @@ def deskew_image_strict(pil_img: Image.Image) -> Image.Image:
                             minLineLength=gray.shape[1] // 2, maxLineGap=20)
 
     if lines is None:
+        print("[⚠️] No lines found. Skipping deskew.")
         return pil_img
 
     angles = []
@@ -31,9 +33,12 @@ def deskew_image_strict(pil_img: Image.Image) -> Image.Image:
             angles.append(angle)
 
     if not angles:
+        print("[⚠️] No valid angles detected.")
         return pil_img
 
     median_angle = np.median(angles)
+    print(f"[🧭] Strict deskew angle: {median_angle:.2f}°")
+
     (h, w) = gray.shape
     center = (w // 2, h // 2)
     M = cv2.getRotationMatrix2D(center, median_angle, 1.0)
@@ -41,21 +46,6 @@ def deskew_image_strict(pil_img: Image.Image) -> Image.Image:
                              borderValue=(255, 255, 255))
     return Image.fromarray(rotated).convert("RGB")
 
-def crop_to_content(image: Image.Image, padding: int = 20) -> Image.Image:
-    gray = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
-    _, binary = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY_INV)
-
-    coords = cv2.findNonZero(binary)
-    if coords is None:
-        return image
-
-    x, y, w, h = cv2.boundingRect(coords)
-    x = max(0, x - padding)
-    y = max(0, y - padding)
-    w = min(image.width - x, w + 2 * padding)
-    h = min(image.height - y, h + 2 * padding)
-
-    return image.crop((x, y, x + w, y + h))
 
 def enhance_image(image: Image.Image) -> Image.Image:
     gray = ImageOps.grayscale(image)
@@ -65,12 +55,14 @@ def enhance_image(image: Image.Image) -> Image.Image:
     sharpened = ImageEnhance.Sharpness(contrast).enhance(1.5)
     return sharpened.convert("RGB")
 
+
 @app.post("/align-image")
 async def align_image(file: UploadFile = File(...)):
     try:
         image_data = await file.read()
         image = Image.open(BytesIO(image_data)).convert("RGB")
         image = ImageOps.exif_transpose(image)
+
         aligned = deskew_image_strict(image)
 
         img_bytes = BytesIO()
@@ -83,6 +75,7 @@ async def align_image(file: UploadFile = File(...)):
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
+
 @app.post("/enhance-ocr")
 async def enhance_ocr(file: UploadFile = File(...)):
     try:
@@ -91,8 +84,7 @@ async def enhance_ocr(file: UploadFile = File(...)):
         image = ImageOps.exif_transpose(image)
 
         aligned = deskew_image_strict(image)
-        cropped = crop_to_content(aligned)
-        enhanced = enhance_image(cropped)
+        enhanced = enhance_image(aligned)
 
         img_bytes = BytesIO()
         enhanced.save(img_bytes, format="PNG")
@@ -104,6 +96,7 @@ async def enhance_ocr(file: UploadFile = File(...)):
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
+
 @app.post("/extract-text")
 async def extract_text(file: UploadFile = File(...)):
     try:
@@ -112,8 +105,7 @@ async def extract_text(file: UploadFile = File(...)):
         image = ImageOps.exif_transpose(image)
 
         aligned = deskew_image_strict(image)
-        cropped = crop_to_content(aligned)
-        enhanced = enhance_image(cropped)
+        enhanced = enhance_image(aligned)
 
         text = pytesseract.image_to_string(enhanced, config="--psm 6")
         return {"text": text.strip()}
