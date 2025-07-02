@@ -1,9 +1,11 @@
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, Body
 from fastapi.responses import StreamingResponse, JSONResponse
 from PIL import Image, ImageOps, ImageEnhance
 import numpy as np
 import cv2
 from io import BytesIO
+import base64
+import re
 
 app = FastAPI()
 
@@ -11,13 +13,11 @@ app = FastAPI()
 def deskew_image_strict(pil_img: Image.Image) -> Image.Image:
     gray = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2GRAY)
     _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (30, 1))
     closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
 
     lines = cv2.HoughLinesP(closed, 1, np.pi / 180, threshold=100,
                             minLineLength=gray.shape[1] // 2, maxLineGap=20)
-
     if lines is None:
         print("[⚠️] No lines found. Skipping deskew.")
         return pil_img
@@ -52,19 +52,17 @@ def enhance_image(image: Image.Image) -> Image.Image:
     sharpened = ImageEnhance.Sharpness(contrast).enhance(1.5)
     return sharpened.convert("RGB")
 
+# UploadFile version
 @app.post("/align-image")
 async def align_image(file: UploadFile = File(...)):
     try:
         image_data = await file.read()
         image = Image.open(BytesIO(image_data)).convert("RGB")
         image = ImageOps.exif_transpose(image)
-
         aligned = deskew_image_strict(image)
-
         img_bytes = BytesIO()
         aligned.save(img_bytes, format="PNG")
         img_bytes.seek(0)
-
         return StreamingResponse(img_bytes, media_type="image/png", headers={
             "Content-Disposition": "inline; filename=aligned_image.png"
         })
@@ -77,16 +75,63 @@ async def enhance_image_endpoint(file: UploadFile = File(...)):
         image_data = await file.read()
         image = Image.open(BytesIO(image_data)).convert("RGB")
         image = ImageOps.exif_transpose(image)
-
         aligned = deskew_image_strict(image)
         enhanced = enhance_image(aligned)
-
         img_bytes = BytesIO()
         enhanced.save(img_bytes, format="PNG")
         img_bytes.seek(0)
-
         return StreamingResponse(img_bytes, media_type="image/png", headers={
             "Content-Disposition": "inline; filename=enhanced_image.png"
+        })
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+# Base64 URL version
+@app.post("/align-base64")
+async def align_base64_image(data: dict = Body(...)):
+    try:
+        base64_url = data.get("base64_url")
+        if not base64_url:
+            return JSONResponse(content={"error": "Missing base64_url"}, status_code=400)
+
+        match = re.match(r'data:image\/\w+;base64,(.+)', base64_url)
+        if not match:
+            return JSONResponse(content={"error": "Invalid base64 image format"}, status_code=400)
+
+        image_data = base64.b64decode(match.group(1))
+        image = Image.open(BytesIO(image_data)).convert("RGB")
+        image = ImageOps.exif_transpose(image)
+        aligned = deskew_image_strict(image)
+        img_bytes = BytesIO()
+        aligned.save(img_bytes, format="PNG")
+        img_bytes.seek(0)
+        return StreamingResponse(img_bytes, media_type="image/png", headers={
+            "Content-Disposition": "inline; filename=aligned_base64_image.png"
+        })
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+@app.post("/enhance-base64")
+async def enhance_base64_image(data: dict = Body(...)):
+    try:
+        base64_url = data.get("base64_url")
+        if not base64_url:
+            return JSONResponse(content={"error": "Missing base64_url"}, status_code=400)
+
+        match = re.match(r'data:image\/\w+;base64,(.+)', base64_url)
+        if not match:
+            return JSONResponse(content={"error": "Invalid base64 image format"}, status_code=400)
+
+        image_data = base64.b64decode(match.group(1))
+        image = Image.open(BytesIO(image_data)).convert("RGB")
+        image = ImageOps.exif_transpose(image)
+        aligned = deskew_image_strict(image)
+        enhanced = enhance_image(aligned)
+        img_bytes = BytesIO()
+        enhanced.save(img_bytes, format="PNG")
+        img_bytes.seek(0)
+        return StreamingResponse(img_bytes, media_type="image/png", headers={
+            "Content-Disposition": "inline; filename=enhanced_base64_image.png"
         })
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
