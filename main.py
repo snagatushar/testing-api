@@ -1,5 +1,5 @@
 from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from PIL import Image, ImageOps, ImageEnhance
 import numpy as np
 import cv2
@@ -53,60 +53,56 @@ def enhance_image(image: Image.Image) -> Image.Image:
     sharpened = ImageEnhance.Sharpness(contrast).enhance(1.5)
     return sharpened.convert("RGB")
 
-# Convert image to base64
-def encode_base64(image: Image.Image) -> str:
-    buffer = BytesIO()
-    image.save(buffer, format="PNG")
-    buffer.seek(0)
-    img_bytes = buffer.getvalue()
-    b64 = base64.b64encode(img_bytes).decode("utf-8")
-    return f"data:image/png;base64,{b64}", img_bytes
+# Convert PIL Image to Base64 URL
+def pil_to_base64_url(img: Image.Image) -> str:
+    buffered = BytesIO()
+    img.save(buffered, format="PNG")
+    img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+    return f"data:image/png;base64,{img_str}"
 
 @app.post("/align-image")
 async def align_image(file: UploadFile = File(...)):
+    """
+    Endpoint for deskewing the uploaded image.
+    Returns the resulting image in binary format.
+    """
     try:
         image_data = await file.read()
         image = Image.open(BytesIO(image_data)).convert("RGB")
         image = ImageOps.exif_transpose(image)
 
         aligned = deskew_image_strict(image)
-        base64_img, binary_data = encode_base64(aligned)
-
-        return JSONResponse(
-            content={
-                "filename": "aligned_image.png",
-                "content_type": "image/png",
-                "base64": base64_img
-            },
-            headers={
-                "Content-Disposition": "attachment; filename=aligned_image.png"
-            },
-            media_type="application/json"
+        
+        # Return the aligned image as binary stream without Base64 conversion
+        img_bytes = BytesIO()
+        aligned.save(img_bytes, format="PNG")
+        img_bytes.seek(0)
+        return StreamingResponse(
+            img_bytes, 
+            media_type="image/png", 
+            headers={"Content-Disposition": "inline; filename=aligned_image.png"}
         )
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
 @app.post("/enhance-image")
 async def enhance_image_endpoint(file: UploadFile = File(...)):
+    """
+    Endpoint for processing the image by first deskewing it then enhancing it.
+    The resulting image is converted to Base64 and returned as a JSON.
+    """
     try:
         image_data = await file.read()
         image = Image.open(BytesIO(image_data)).convert("RGB")
         image = ImageOps.exif_transpose(image)
-
+        
+        # First, deskew the image
         aligned = deskew_image_strict(image)
+        # Then, perform Pillow-based enhancement
         enhanced = enhance_image(aligned)
-        base64_img, binary_data = encode_base64(enhanced)
-
-        return JSONResponse(
-            content={
-                "filename": "enhanced_image.png",
-                "content_type": "image/png",
-                "base64": base64_img
-            },
-            headers={
-                "Content-Disposition": "attachment; filename=enhanced_image.png"
-            },
-            media_type="application/json"
-        )
+        
+        # Convert enhanced image to Base64 URL
+        base64_url = pil_to_base64_url(enhanced)
+        return JSONResponse(content={"image_base64_url": base64_url})
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
