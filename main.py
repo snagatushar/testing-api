@@ -1,5 +1,5 @@
 from fastapi import FastAPI, File, UploadFile, Body
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from PIL import Image, ImageOps, ImageEnhance
 import numpy as np
 import cv2
@@ -52,65 +52,32 @@ def enhance_image(image: Image.Image) -> Image.Image:
     sharpened = ImageEnhance.Sharpness(contrast).enhance(1.5)
     return sharpened.convert("RGB")
 
-# UploadFile version
-@app.post("/align-image")
-async def align_image(file: UploadFile = File(...)):
-    try:
-        image_data = await file.read()
-        image = Image.open(BytesIO(image_data)).convert("RGB")
-        image = ImageOps.exif_transpose(image)
-        aligned = deskew_image_strict(image)
-        img_bytes = BytesIO()
-        aligned.save(img_bytes, format="PNG")
-        img_bytes.seek(0)
-        return StreamingResponse(img_bytes, media_type="image/png", headers={
-            "Content-Disposition": "inline; filename=aligned_image.png"
-        })
-    except Exception as e:
-        return JSONResponse(content={"error": str(e)}, status_code=500)
-
-@app.post("/enhance-image")
-async def enhance_image_endpoint(file: UploadFile = File(...)):
+# UploadFile version - returns base64
+@app.post("/enhance-image-json")
+async def enhance_image_json(file: UploadFile = File(...)):
     try:
         image_data = await file.read()
         image = Image.open(BytesIO(image_data)).convert("RGB")
         image = ImageOps.exif_transpose(image)
         aligned = deskew_image_strict(image)
         enhanced = enhance_image(aligned)
+
         img_bytes = BytesIO()
         enhanced.save(img_bytes, format="PNG")
         img_bytes.seek(0)
-        return StreamingResponse(img_bytes, media_type="image/png", headers={
-            "Content-Disposition": "inline; filename=enhanced_image.png"
-        })
+
+        base64_image = base64.b64encode(img_bytes.getvalue()).decode("utf-8")
+
+        return {
+            "filename": "enhanced_image.png",
+            "media_type": "image/png",
+            "base64_image": f"data:image/png;base64,{base64_image}"
+        }
+
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
-# Base64 URL version
-@app.post("/align-base64")
-async def align_base64_image(data: dict = Body(...)):
-    try:
-        base64_url = data.get("base64_url")
-        if not base64_url:
-            return JSONResponse(content={"error": "Missing base64_url"}, status_code=400)
-
-        match = re.match(r'data:image\/\w+;base64,(.+)', base64_url)
-        if not match:
-            return JSONResponse(content={"error": "Invalid base64 image format"}, status_code=400)
-
-        image_data = base64.b64decode(match.group(1))
-        image = Image.open(BytesIO(image_data)).convert("RGB")
-        image = ImageOps.exif_transpose(image)
-        aligned = deskew_image_strict(image)
-        img_bytes = BytesIO()
-        aligned.save(img_bytes, format="PNG")
-        img_bytes.seek(0)
-        return StreamingResponse(img_bytes, media_type="image/png", headers={
-            "Content-Disposition": "inline; filename=aligned_base64_image.png"
-        })
-    except Exception as e:
-        return JSONResponse(content={"error": str(e)}, status_code=500)
-
+# Base64 input version - returns base64
 @app.post("/enhance-base64")
 async def enhance_base64_image(data: dict = Body(...)):
     try:
@@ -127,11 +94,18 @@ async def enhance_base64_image(data: dict = Body(...)):
         image = ImageOps.exif_transpose(image)
         aligned = deskew_image_strict(image)
         enhanced = enhance_image(aligned)
+
         img_bytes = BytesIO()
         enhanced.save(img_bytes, format="PNG")
         img_bytes.seek(0)
-        return StreamingResponse(img_bytes, media_type="image/png", headers={
-            "Content-Disposition": "inline; filename=enhanced_base64_image.png"
-        })
+
+        base64_image = base64.b64encode(img_bytes.getvalue()).decode("utf-8")
+
+        return {
+            "filename": "enhanced_base64_image.png",
+            "media_type": "image/png",
+            "base64_image": f"data:image/png;base64,{base64_image}"
+        }
+
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
