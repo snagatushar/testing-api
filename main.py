@@ -1,16 +1,13 @@
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import StreamingResponse, JSONResponse
 from PIL import Image, ImageOps, ImageEnhance
-import pytesseract
 import numpy as np
 import cv2
 from io import BytesIO
 
-pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
-
 app = FastAPI()
 
-
+# Deskew image using OpenCV
 def deskew_image_strict(pil_img: Image.Image) -> Image.Image:
     gray = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2GRAY)
     _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
@@ -46,7 +43,7 @@ def deskew_image_strict(pil_img: Image.Image) -> Image.Image:
                              borderValue=(255, 255, 255))
     return Image.fromarray(rotated).convert("RGB")
 
-
+# Pillow enhancement
 def enhance_image(image: Image.Image) -> Image.Image:
     gray = ImageOps.grayscale(image)
     if gray.width < 1200:
@@ -54,7 +51,6 @@ def enhance_image(image: Image.Image) -> Image.Image:
     contrast = ImageEnhance.Contrast(gray).enhance(1.2)
     sharpened = ImageEnhance.Sharpness(contrast).enhance(1.5)
     return sharpened.convert("RGB")
-
 
 @app.post("/align-image")
 async def align_image(file: UploadFile = File(...)):
@@ -75,9 +71,8 @@ async def align_image(file: UploadFile = File(...)):
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
-
-@app.post("/enhance-ocr")
-async def enhance_ocr(file: UploadFile = File(...)):
+@app.post("/enhance-image")
+async def enhance_image_endpoint(file: UploadFile = File(...)):
     try:
         image_data = await file.read()
         image = Image.open(BytesIO(image_data)).convert("RGB")
@@ -91,23 +86,7 @@ async def enhance_ocr(file: UploadFile = File(...)):
         img_bytes.seek(0)
 
         return StreamingResponse(img_bytes, media_type="image/png", headers={
-            "Content-Disposition": "inline; filename=enhanced_output.png"
+            "Content-Disposition": "inline; filename=enhanced_image.png"
         })
-    except Exception as e:
-        return JSONResponse(content={"error": str(e)}, status_code=500)
-
-
-@app.post("/extract-text")
-async def extract_text(file: UploadFile = File(...)):
-    try:
-        image_data = await file.read()
-        image = Image.open(BytesIO(image_data)).convert("RGB")
-        image = ImageOps.exif_transpose(image)
-
-        aligned = deskew_image_strict(image)
-        enhanced = enhance_image(aligned)
-
-        text = pytesseract.image_to_string(enhanced, config="--psm 6")
-        return {"text": text.strip()}
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
