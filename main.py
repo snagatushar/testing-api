@@ -4,6 +4,7 @@ from PIL import Image, ImageOps, ImageEnhance
 import numpy as np
 import cv2
 from io import BytesIO
+import base64
 
 app = FastAPI()
 
@@ -52,6 +53,7 @@ def enhance_image(image: Image.Image) -> Image.Image:
     sharpened = ImageEnhance.Sharpness(contrast).enhance(1.5)
     return sharpened.convert("RGB")
 
+# Return binary PNG
 @app.post("/align-image")
 async def align_image(file: UploadFile = File(...)):
     try:
@@ -71,6 +73,7 @@ async def align_image(file: UploadFile = File(...)):
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
+# Return Base64 PNG
 @app.post("/enhance-image")
 async def enhance_image_endpoint(file: UploadFile = File(...)):
     try:
@@ -81,12 +84,13 @@ async def enhance_image_endpoint(file: UploadFile = File(...)):
         aligned = deskew_image_strict(image)
         enhanced = enhance_image(aligned)
 
+        # Convert to base64
         img_bytes = BytesIO()
         enhanced.save(img_bytes, format="PNG")
         img_bytes.seek(0)
+        img_base64 = base64.b64encode(img_bytes.getvalue()).decode("utf-8")
+        base64_url = f"data:image/png;base64,{img_base64}"
 
-        return StreamingResponse(img_bytes, media_type="image/png", headers={
-            "Content-Disposition": "inline; filename=enhanced_image.png"
-        })
+        return JSONResponse(content={"image_base64_url": base64_url})
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
