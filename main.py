@@ -8,7 +8,7 @@ import base64
 
 app = FastAPI()
 
-# Deskew image using OpenCV
+# ---------- Deskew ----------
 def deskew_image_strict(pil_img: Image.Image) -> Image.Image:
     gray = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2GRAY)
     _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
@@ -35,7 +35,7 @@ def deskew_image_strict(pil_img: Image.Image) -> Image.Image:
         return pil_img
 
     median_angle = np.median(angles)
-    print(f"[🧭] Strict deskew angle: {median_angle:.2f}°")
+    print(f"[🧭] Deskew angle: {median_angle:.2f}°")
 
     (h, w) = gray.shape
     center = (w // 2, h // 2)
@@ -44,7 +44,7 @@ def deskew_image_strict(pil_img: Image.Image) -> Image.Image:
                              borderValue=(255, 255, 255))
     return Image.fromarray(rotated).convert("RGB")
 
-# Pillow enhancement
+# ---------- Enhance ----------
 def enhance_image(image: Image.Image) -> Image.Image:
     gray = ImageOps.grayscale(image)
     if gray.width < 1200:
@@ -53,27 +53,33 @@ def enhance_image(image: Image.Image) -> Image.Image:
     sharpened = ImageEnhance.Sharpness(contrast).enhance(1.5)
     return sharpened.convert("RGB")
 
-# Return binary PNG
-@app.post("/align-image")
-async def align_image(file: UploadFile = File(...)):
-    try:
-        image_data = await file.read()
-        image = Image.open(BytesIO(image_data)).convert("RGB")
-        image = ImageOps.exif_transpose(image)
+# ---------- Auto-crop ----------
+def autocrop(pil_img: Image.Image) -> Image.Image:
+    img_array = np.array(pil_img)
+    if img_array.ndim == 2:  # grayscale
+        mask = img_array < 250
+    else:
+        mask = np.mean(img_array, axis=2) < 250
+    coords = np.argwhere(mask)
+    if coords.size > 0:
+        y0, x0 = coords.min(axis=0)
+        y1, x1 = coords.max(axis=0) + 1
+        return pil_img.crop((x0, y0, x1, y1))
+    return pil_img
 
-        aligned = deskew_image_strict(image)
+# ---------- Resize & JPEG encode to base64 ----------
+def resize_and_compress(image: Image.Image, max_width=1000, quality=85) -> str:
+    if image.width > max_width:
+        ratio = max_width / float(image.width)
+        new_height = int(image.height * ratio)
+        image = image.resize((max_width, new_height), Image.ANTIALIAS)
 
-        img_bytes = BytesIO()
-        aligned.save(img_bytes, format="PNG")
-        img_bytes.seek(0)
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG", quality=quality)
+    encoded = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    return f"data:image/jpeg;base64,{encoded}"
 
-        return StreamingResponse(img_bytes, media_type="image/png", headers={
-            "Content-Disposition": "inline; filename=aligned_image.png"
-        })
-    except Exception as e:
-        return JSONResponse(content={"error": str(e)}, status_code=500)
-
-# Return Base64 PNG
+# ---------- API Endpoint ----------
 @app.post("/enhance-image")
 async def enhance_image_endpoint(file: UploadFile = File(...)):
     try:
@@ -83,14 +89,9 @@ async def enhance_image_endpoint(file: UploadFile = File(...)):
 
         aligned = deskew_image_strict(image)
         enhanced = enhance_image(aligned)
+        cropped = autocrop(enhanced)
+        optimized_base64 = resize_and_compress(cropped)
 
-        # Convert to base64
-        img_bytes = BytesIO()
-        enhanced.save(img_bytes, format="PNG")
-        img_bytes.seek(0)
-        img_base64 = base64.b64encode(img_bytes.getvalue()).decode("utf-8")
-        base64_url = f"data:image/png;base64,{img_base64}"
-
-        return JSONResponse(content={"image_base64_url": base64_url})
+        return JSONResponse(content={"image_base64_url": optimized_base64})
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
