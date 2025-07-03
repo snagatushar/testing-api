@@ -1,5 +1,5 @@
 from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from PIL import Image, ImageOps, ImageEnhance
 import numpy as np
 import cv2
@@ -56,7 +56,7 @@ def enhance_image(image: Image.Image) -> Image.Image:
 # ---------- Auto-crop ----------
 def autocrop(pil_img: Image.Image) -> Image.Image:
     img_array = np.array(pil_img)
-    if img_array.ndim == 2:  # grayscale
+    if img_array.ndim == 2:
         mask = img_array < 250
     else:
         mask = np.mean(img_array, axis=2) < 250
@@ -67,8 +67,8 @@ def autocrop(pil_img: Image.Image) -> Image.Image:
         return pil_img.crop((x0, y0, x1, y1))
     return pil_img
 
-# ---------- Resize & JPEG encode to base64 ----------
-def resize_and_compress(image: Image.Image, max_width=1000, quality=85) -> str:
+# ---------- Resize & Output Both Formats ----------
+def prepare_outputs(image: Image.Image, max_width=1000, quality=85):
     if image.width > max_width:
         ratio = max_width / float(image.width)
         new_height = int(image.height * ratio)
@@ -76,10 +76,19 @@ def resize_and_compress(image: Image.Image, max_width=1000, quality=85) -> str:
 
     buffer = BytesIO()
     image.save(buffer, format="JPEG", quality=quality)
-    encoded = base64.b64encode(buffer.getvalue()).decode("utf-8")
-    return f"data:image/jpeg;base64,{encoded}"
+    img_bytes = buffer.getvalue()
 
-# ---------- API Endpoint ----------
+    base64_image = base64.b64encode(img_bytes).decode("utf-8")
+    base64_url = f"data:image/jpeg;base64,{base64_image}"
+
+    return {
+        "image_base64_url": base64_url,
+        "image_binary": base64_image,  # raw base64
+        "mime_type": "image/jpeg",
+        "file_name": "enhanced_image.jpg"
+    }
+
+# ---------- Main API ----------
 @app.post("/enhance-image")
 async def enhance_image_endpoint(file: UploadFile = File(...)):
     try:
@@ -90,8 +99,9 @@ async def enhance_image_endpoint(file: UploadFile = File(...)):
         aligned = deskew_image_strict(image)
         enhanced = enhance_image(aligned)
         cropped = autocrop(enhanced)
-        optimized_base64 = resize_and_compress(cropped)
 
-        return JSONResponse(content={"image_base64_url": optimized_base64})
+        result = prepare_outputs(cropped)
+
+        return JSONResponse(content=result)
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
