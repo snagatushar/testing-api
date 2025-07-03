@@ -48,7 +48,7 @@ def deskew_image_strict(pil_img: Image.Image) -> Image.Image:
 def enhance_image(image: Image.Image) -> Image.Image:
     gray = ImageOps.grayscale(image)
     if gray.width < 1200:
-        gray = gray.resize((int(gray.width * 1.5), int(gray.height * 1.5)), Image.BICUBIC)
+        gray = gray.resize((int(gray.width * 1.5), int(gray.height * 1.5)), Image.Resampling.LANCZOS)
     contrast = ImageEnhance.Contrast(gray).enhance(1.2)
     sharpened = ImageEnhance.Sharpness(contrast).enhance(1.5)
     return sharpened.convert("RGB")
@@ -72,7 +72,7 @@ def resize_and_compress(image: Image.Image, max_width=1000, quality=85) -> str:
     if image.width > max_width:
         ratio = max_width / float(image.width)
         new_height = int(image.height * ratio)
-        image = image.resize((max_width, new_height), Image.ANTIALIAS)
+        image = image.resize((max_width, new_height), Image.Resampling.LANCZOS)
 
     buffer = BytesIO()
     image.save(buffer, format="JPEG", quality=quality)
