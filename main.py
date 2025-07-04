@@ -67,7 +67,7 @@ def autocrop(pil_img: Image.Image) -> Image.Image:
         return pil_img.crop((x0, y0, x1, y1))
     return pil_img
 
-# ---------- Resize & Output Both Formats ----------
+# ---------- JPEG Output ----------
 def prepare_outputs(image: Image.Image, max_width=1000, quality=85):
     if image.width > max_width:
         ratio = max_width / float(image.width)
@@ -83,12 +83,29 @@ def prepare_outputs(image: Image.Image, max_width=1000, quality=85):
 
     return {
         "image_base64_url": base64_url,
-        "image_binary": base64_image,  # raw base64
+        "image_binary": base64_image,
         "mime_type": "image/jpeg",
         "file_name": "enhanced_image.jpg"
     }
 
-# ---------- Main API ----------
+# ---------- PDF Output ----------
+def prepare_pdf_output(image: Image.Image, pdf_filename="enhanced_output.pdf"):
+    pdf_buffer = BytesIO()
+    rgb_image = image.convert("RGB")
+    rgb_image.save(pdf_buffer, format="PDF")
+    pdf_bytes = pdf_buffer.getvalue()
+
+    base64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
+    base64_pdf_url = f"data:application/pdf;base64,{base64_pdf}"
+
+    return {
+        "pdf_base64_url": base64_pdf_url,
+        "pdf_binary": base64_pdf,
+        "mime_type": "application/pdf",
+        "file_name": pdf_filename
+    }
+
+# ---------- Main Endpoint ----------
 @app.post("/enhance-image")
 async def enhance_image_endpoint(file: UploadFile = File(...)):
     try:
@@ -100,8 +117,12 @@ async def enhance_image_endpoint(file: UploadFile = File(...)):
         enhanced = enhance_image(aligned)
         cropped = autocrop(enhanced)
 
-        result = prepare_outputs(cropped)
+        image_result = prepare_outputs(cropped)
+        pdf_result = prepare_pdf_output(cropped)
 
-        return JSONResponse(content=result)
+        return JSONResponse(content={
+            "image_result": image_result,
+            "pdf_result": pdf_result
+        })
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
